@@ -30,6 +30,9 @@
 #include <pthread.h>
 #include <dirent.h>
 #include <ctype.h>
+//Arduino part
+#include "output/arduino-serial-lib.h"
+
 
 #ifdef NCURSES
 #include "output/terminal_ncurses.h"
@@ -81,7 +84,7 @@ int rc;
 int M = 2048;
 
 
-
+double map(double value, double istart, double istop, double ostart, double ostop);
 
 // whether we should reload the config or not
 int should_reload = 0;
@@ -248,7 +251,21 @@ as of 0.4.0 all options are specified in config file, see in '/home/username/.co
 	int sourceIsAuto = 1;
 	double smh;
 
-	//int maxvalue = 0;
+	// general: arduino vars
+	int baudrate = 115200;
+	int rc;
+	int fd = -1;
+	char* serialport = "/dev/ttyUSB0";
+
+	fd = serialport_init(serialport, baudrate);
+	if (fd == -1)
+		error("couldn't open port");
+
+	printf("opened port %s\n", serialport);
+	serialport_flush(fd);
+
+
+        //int maxvalue = 0;
 
 	struct audio_data audio;
 	struct config_params p;
@@ -513,11 +530,11 @@ as of 0.4.0 all options are specified in config file, see in '/home/username/.co
 		rest = (w - bars * p.bw - bars * p.bs + p.bs) / 2;
 		if (rest < 0)rest = 0;
 
-		#ifdef DEBUG
-			printw("height: %d width: %d bars:%d bar width: %d rest: %d\n",
-						 w,
-						 h, bars, p.bw, rest);
-		#endif
+		// #ifdef DEBUG
+		// 	printw("height: %d width: %d bars:%d bar width: %d rest: %d\n",
+		// 				 w,
+		// 				 h, bars, p.bw, rest);
+		// #endif
 
 		//output: start noncurses mode
 		if (p.om == 3) init_terminal_noncurses(p.col, p.bgcol, w, h, p.bw);
@@ -555,13 +572,13 @@ as of 0.4.0 all options are specified in config file, see in '/home/username/.co
 				hcf[n - 1] = lcf[n] - 1;
 			}
 
-			#ifdef DEBUG
-			 	if (n != 0) {
-					mvprintw(n,0,"%d: %f -> %f (%d -> %d) \n", n, 
-						fc[n - 1], fc[n], lcf[n - 1],
-			 				 hcf[n - 1]);
-						}
-			#endif
+			// #ifdef DEBUG
+			//  	if (n != 0) {
+			// 		mvprintw(n,0,"%d: %f -> %f (%d -> %d) \n", n, 
+			// 			fc[n - 1], fc[n], lcf[n - 1],
+			//  				 hcf[n - 1]);
+			// 			}
+			// #endif
 		}
 
 		// process: weigh signal to frequencies
@@ -722,6 +739,7 @@ as of 0.4.0 all options are specified in config file, see in '/home/username/.co
 
 			// process [smoothing]: integral
 			if (p.integral > 0) {
+				rc = serialport_writebyte(fd, (uint8_t)255);
 				for (o = 0; o < bars; o++) {
 					f[o] = fmem[o] * p.integral + f[o];
 					fmem[o] = f[o];
@@ -733,11 +751,18 @@ as of 0.4.0 all options are specified in config file, see in '/home/username/.co
 					fmem[o] = fmem[o] * (1 - div / 20); 
 
 					#ifdef DEBUG
-						mvprintw(o,0,"%d: f:%f->%f (%d->%d)peak:%d \n",
-							 o, fc[o], fc[o + 1],
-									 lcf[o], hcf[o], f[o]);
+						//Sending data part
+                                        rc = serialport_writebyte(fd, (uint8_t)map(f[o], 0, 200, 0, 16));
+                                        // if (rc == -1)
+                                            // error("error writing");
+                                        mvprintw(o, 0, "NORM peak:%d peak: %d", (int)map(f[o], 0, 200, 0, 16), f[o]);
+                                        // mvprintw(o,0,"%d: f:%f->%f (%d->%d)peak:%d \n",
+                                        // 	 o, fc[o], fc[o + 1],
+                                        // 			 lcf[o], hcf[o], f[o]);
+						
 					#endif
 				}
+
 			}
 
 
@@ -811,7 +836,11 @@ as of 0.4.0 all options are specified in config file, see in '/home/username/.co
 	req.tv_sec = 0;
 	req.tv_nsec = 100; //waiting some time to make shure audio is ready
 	nanosleep (&req, NULL);
-
+	//Close file(port)
+	if (fd != -1) {
+		serialport_close(fd);
+		printf("closed port %s\n", serialport);
+	}
 	//**telling audio thread to terminate**//
 	audio.terminate = 1;
 	pthread_join( p_thread, NULL);
@@ -823,4 +852,10 @@ as of 0.4.0 all options are specified in config file, see in '/home/username/.co
 
 	//fclose(fp);
 	}
+}
+
+
+
+double map(double value, double istart, double istop, double ostart, double ostop) {
+	return ostart + (ostop - ostart) * ((value - istart) / (istop - istart));
 }
